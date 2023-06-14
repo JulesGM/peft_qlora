@@ -118,7 +118,7 @@ def from_pretrained(
         max_memory = f"{max_memory_MB}MB"
         max_memory = {i: max_memory for i in range(n_gpus)}
     else:
-        max_memory is None
+        max_memory = None
 
     device_map = "auto"
 
