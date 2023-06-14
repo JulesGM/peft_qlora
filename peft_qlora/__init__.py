@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 
 IGNORE_INDEX = -100
 DEFAULT_PAD_TOKEN = "[PAD]"
+_DEFAULT_VAL_LOCAL_RANK = (
+    int(os.environ["LOCAL_RANK"]) 
+    if "LOCAL_RANK" in os.environ else None
+)
 
 def _find_all_linear_names(bits, model):
     cls = (
@@ -49,7 +53,6 @@ def _check_is_causal(model_name_or_path: str):
             "but do so at your own risk."
         )
 
-
 def from_pretrained(
     model_name_or_path: str,
     fp16: bool = False,
@@ -68,6 +71,7 @@ def from_pretrained(
     lora_alpha: int = 16,
     lora_dropout: float = 0.0,
     ignore_is_causal_check: bool = False,
+    local_rank: Optional[int] = _DEFAULT_VAL_LOCAL_RANK,
 ):
     """
     Main function of this library.
@@ -79,23 +83,60 @@ def from_pretrained(
     qlora/qlora.get_accelerate_model to add the arguments and the defaults.
     
     Args:
-        model_name_or_path: Huggingface auto model from_pretrained name or path argument.
-        bf16: Whether to use bf16.
-        fp16: Whether to use fp16.
-        cache_dir: Huggingface caching dir.
-        checkpoint_dir: Huggingface checkpoint dir.
-        max_memory_MB: Max gpu memory to use in Megabytes.
-        full_finetune: Finetune the entire model without adapters.
-        gradient_checkpointing: Use gradient checkpointing. You want to use this.
-        bits: How many bits to use.
-        quant_type: Quantization data type to use. Should be one of `fp4` or `nf4`.
-        double_quant: Compress the quantization statistics through double quantization.
-        trust_remote_code: Enable unpickling of arbitrary code in AutoModelForCausalLM.from_pretrained.
-        use_auth_token: Enables using Huggingface auth token from Git Credentials.
-        lora_r: Lora R dimension.
-        lora_alpha: Lora alpha.
-        lora_dropout: Lora dropout.
-        ignore_is_causal_check: We added this. This is if you want to try using an encoder decoder. It's untested.
+        model_name_or_path: 
+            Huggingface auto model from_pretrained name or path argument.
+            No default.
+        bf16: 
+            Whether to use bf16.
+            Default: True.
+        fp16: 
+            Whether to use fp16.
+            Default: False.
+        cache_dir: 
+            Huggingface caching dir.
+            Default: None.
+        checkpoint_dir: 
+            Huggingface checkpoint dir.
+            Default: None.
+        max_memory_MB: 
+            Max gpu memory to use in Megabytes.
+            Default: None.
+        full_finetune: 
+            Finetune the entire model without adapters.
+            Default: False.
+        gradient_checkpointing: 
+            Use gradient checkpointing. You want to use this.
+            Default: True.
+        bits: 
+            How many bits to use.
+            Default: 4.
+        quant_type: 
+            Quantization data type to use. Should be one of `fp4` or `nf4`.
+            Default: `nf4`.
+        double_quant: 
+            Compress the quantization statistics through double quantization.
+            Default: True.
+        trust_remote_code: 
+            Enable unpickling of arbitrary code in AutoModelForCausalLM.from_pretrained.
+            Default: False.
+        use_auth_token: 
+            Enables using Huggingface auth token from Git Credentials.
+            Default: False.
+        lora_r: 
+            Lora R dimension.
+            Default: 64.
+        lora_alpha: 
+            Lora alpha.
+            Default: 16.
+        lora_dropout: 
+            Lora dropout.
+            Default: 0.0.
+        ignore_is_causal_check: 
+            We added this. This is if you want to try using an encoder decoder. It's untested.
+            Default: False.
+        local_rank: 
+            Local rank for distributed training. 
+            Default: int(os.environ["LOCAL_RANK"]) if it exists.
     """
 
     cls = transformers.AutoModelForCausalLM
@@ -123,8 +164,7 @@ def from_pretrained(
     device_map = "auto"
 
     # if we are in a distributed setting, we need to set the device map and max memory per device
-    if os.environ.get("LOCAL_RANK") is not None:
-        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    if local_rank is not None:
         device_map = {"": local_rank}
         max_memory = {"": max_memory[local_rank]}
 
