@@ -1,1 +1,5 @@
-# peft_qlora
+# Peft QLoRA
+
+QLora from https://github.com/artidoro/qlora/ is only available as part of a training script.
+We split it from the script & made it its own library with the same defaults etc, 
+to allow for easier use in other projects.
