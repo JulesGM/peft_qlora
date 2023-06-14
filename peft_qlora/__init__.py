@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 IGNORE_INDEX = -100
 DEFAULT_PAD_TOKEN = "[PAD]"
 
-
 def _find_all_linear_names(bits, model):
     cls = (
         bnb.nn.Linear4bit
@@ -38,19 +37,20 @@ def _find_all_linear_names(bits, model):
 
 def _check_is_causal(model_name_or_path: str):
     try:
-        config = transformers.AutoConfig.from_pretrained(model_name_or_path)
+        config = transformers.AutoConfig.from_pretrained(
+            model_name_or_path)
     except OSError as e:
         return
 
     if vars(config).get("is_encoder_decoder", False):
         raise ValueError(
             "We haven't tested the code with encoder-decoder models yet. "
-            "Pass ignore_is_causal_check=True to get_accelerate_model to ignore this error, "
+            f"Pass ignore_is_causal_check=True to `peft_qlora.from_pretrained` to ignore this error, "
             "but do so at your own risk."
         )
 
 
-def get_accelerate_model(
+def from_pretrained(
     model_name_or_path: str,
     fp16: bool = False,
     bf16: bool = True,
@@ -72,10 +72,12 @@ def get_accelerate_model(
     """
     Main function of this library.
 
-    Create your model using `peft_lora.get_accelerate_model`, 
+    Creates your model with QLora. You can
     then use it like a normal HuggingFace Peft Model.
 
-
+    Very slightly modified from the original 
+    qlora/qlora.get_accelerate_model to add the arguments and the defaults.
+    
     Args:
         model_name_or_path: Huggingface auto model from_pretrained name or path argument.
         bf16: Whether to use bf16.

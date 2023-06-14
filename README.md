@@ -6,21 +6,23 @@ We split it from the script & made it its own library with the same defaults, to
 
 # How to use:
 
-Create your model using `peft_lora.get_accelerate_model`, then use it like a normal [Peft](https://github.com/huggingface/peft)/Huggingface model, like [in this example](https://github.com/huggingface/peft/blob/main/examples/causal_language_modeling/peft_lora_clm_accelerate_big_model_inference.ipynb).
+Create your model using `peft_lora.from_pretrained`, then use it like a normal [Peft](https://github.com/huggingface/peft)/Huggingface model, like [in this example](https://github.com/huggingface/peft/blob/main/examples/causal_language_modeling/peft_lora_clm_accelerate_big_model_inference.ipynb).
 
-**Note:** Only tested on causal models. There is a way to test it on seq2seq models however: pass `ignore_is_causal_check=True` to `get_accelerate_model`, and the `model_name_or_path` of an encoder decoder, like `google/flan-t5-xxl`.
+Very slightly modified from the original `qlora/qlora.get_accelerate_model` to add the arguments explicitely and to add the defaults from the arg config.
+
+**Note:** Only tested on causal models. There is a way to test it on seq2seq models however: pass `ignore_is_causal_check=True` to `peft_qlora.from_pretrained`, and the `model_name_or_path` of an encoder decoder, like `google/flan-t5-xxl`.
 
 ## Example:
 
 ```python
 
-model = peft_lora.get_accelerate_model("EleutherAI/pythia-12b")
+model = peft_lora.from_pretrained("EleutherAI/pythia-12b")
 
 # < .. use the model like you would with any other peft model: https://github.com/huggingface/peft >
 
 ```
 
-## get_accelerate_model:
+## peft_lora.from_pretrained:
 
 *model_name_or_path:* Huggingface auto model from_pretrained name or path argument.
 
