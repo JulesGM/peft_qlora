@@ -12,15 +12,13 @@ from peft import (LoraConfig, PeftModel, get_peft_model,
                   prepare_model_for_kbit_training)
 from peft.tuners.lora import LoraLayer
 
-torch.backends.cuda.matmul.allow_tf32 = True
-
 logger = logging.getLogger(__name__)
 
 IGNORE_INDEX = -100
 DEFAULT_PAD_TOKEN = "[PAD]"
 
 
-def find_all_linear_names_(bits, model):
+def _find_all_linear_names(bits, model):
     cls = (
         bnb.nn.Linear4bit
         if bits == 4
@@ -34,17 +32,22 @@ def find_all_linear_names_(bits, model):
 
     if "lm_head" in lora_module_names:  # needed for 16-bit
         lora_module_names.remove("lm_head")
+
     return list(lora_module_names)
 
 
-def check_is_causal_(model_name_or_path: str):
+def _check_is_causal(model_name_or_path: str):
     try:
         config = transformers.AutoConfig.from_pretrained(model_name_or_path)
     except OSError as e:
         return
 
     if vars(config).get("is_encoder_decoder", False):
-        raise ValueError("We haven't tested the code with encoder-decoder models yet.")
+        raise ValueError(
+            "We haven't tested the code with encoder-decoder models yet. "
+            "Pass ignore_is_causal_check=True to get_accelerate_model to ignore this error, "
+            "but do so at your own risk."
+        )
 
 
 def get_accelerate_model(
@@ -67,12 +70,18 @@ def get_accelerate_model(
     ignore_is_causal_check: bool = False,
 ):
     """
+    Main function of this library.
+
+    Create your model using `peft_lora.get_accelerate_model`, 
+    then use it like a normal HuggingFace Peft Model.
+
+
     Args:
         model_name_or_path: Huggingface auto model from_pretrained name or path argument.
-        bf16,
-        fp16,
-        cache_dir
-        checkpoint_dir
+        bf16: Whether to use bf16.
+        fp16: Whether to use fp16.
+        cache_dir: Huggingface caching dir.
+        checkpoint_dir: Huggingface checkpoint dir.
         max_memory_MB: Max gpu memory to use in Megabytes.
         full_finetune: Finetune the entire model without adapters.
         gradient_checkpointing: Use gradient checkpointing. You want to use this.
@@ -93,7 +102,7 @@ def get_accelerate_model(
         if vars(config).get("is_encoder_decoder", False):
             cls = transformers.AutoModelForSeq2SeqLM
     else:
-        check_is_causal_(model_name_or_path)
+        _check_is_causal(model_name_or_path)
 
     n_gpus = torch.cuda.device_count()
     max_memory = f"{max_memory_MB}MB"
@@ -166,7 +175,7 @@ def get_accelerate_model(
             )
         else:
             print(f"adding LoRA modules...")
-            modules = find_all_linear_names_(bits, model)
+            modules = _find_all_linear_names(bits, model)
             config = LoraConfig(
                 r=lora_r,
                 lora_alpha=lora_alpha,
