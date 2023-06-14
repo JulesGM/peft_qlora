@@ -106,9 +106,20 @@ def from_pretrained(
     else:
         _check_is_causal(model_name_or_path)
 
+    if fp16 and bf16:
+        raise ValueError("Can't use both fp16 and bf16")
+
+    assert bits in [4, 8, 16, 32], (
+        f"bits must be one of 4, 8, 16, 32, got {bits}")
+
     n_gpus = torch.cuda.device_count()
-    max_memory = f"{max_memory_MB}MB"
-    max_memory = {i: max_memory for i in range(n_gpus)}
+    
+    if max_memory_MB:
+        max_memory = f"{max_memory_MB}MB"
+        max_memory = {i: max_memory for i in range(n_gpus)}
+    else:
+        max_memory is None
+
     device_map = "auto"
 
     # if we are in a distributed setting, we need to set the device map and max memory per device

@@ -16,7 +16,7 @@ Very slightly modified from the original `qlora/qlora.get_accelerate_model` to a
 
 ```python
 
-model = peft_lora.from_pretrained("EleutherAI/pythia-12b")
+model = peft_lora.from_pretrained("EleutherAI/pythia-12b", bf16=True)
 
 # < .. use the model like you would with any other peft model: https://github.com/huggingface/peft >
 
