@@ -1,1 +1,1 @@
-from peft_qlora.main import from_pretrained
+from peft_qlora.src import from_pretrained
