@@ -1,4 +1,4 @@
-# Peft QLoRA
+# Only HuggingFace PEFT-QLoRA
 
 QLora from https://github.com/artidoro/qlora/ is currently only available as part of a training script.
 
