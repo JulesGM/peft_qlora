@@ -8,6 +8,7 @@ from typing import Dict, Optional, Sequence
 import bitsandbytes as bnb
 import torch
 import transformers
+import transformers.models.llama.modeling_llama
 import peft
 from peft.tuners.lora import LoraLayer
 
@@ -398,7 +399,8 @@ def from_pretrained(
         # -------------------------------------------------------------------------
         if isinstance(
                 module, 
-                torch.nn.modules.normalization.LayerNorm
+                (torch.nn.modules.normalization.LayerNorm,
+                 transformers.models.llama.modeling_llama.LlamaRMSNorm)
         ):    
             # -------------------------------------------------------------------------
             # JulesGM - FIX
