@@ -3,7 +3,7 @@
 
 import logging
 import os
-from typing import Dict, Optional, Sequence
+from typing import Dict, Optional, Union
 
 import bitsandbytes as bnb
 import torch
@@ -13,16 +13,15 @@ import peft
 from peft.tuners.lora import LoraLayer
 
 
-logger = logging.getLogger(__name__)
-
+LOGGER = logging.getLogger(__name__)
 IGNORE_INDEX = -100
 DEFAULT_PAD_TOKEN = "[PAD]"
 _DEFAULT_VAL_LOCAL_RANK = (
-    int(os.environ["LOCAL_RANK"]) 
-    if "LOCAL_RANK" in os.environ else None
-)
+    int(os.environ["LOCAL_RANK"])
+    if "LOCAL_RANK" in os.environ else None)
 
-def _find_all_linear_names(bits: int, model, lm_head_name: str):
+
+def _find_all_linear_names(bits: int, model, head_name: Optional[str]):
     """ Finds all the linear layer names in the model.
 
     This is to pass them as targets for LORA.
@@ -62,8 +61,8 @@ def _find_all_linear_names(bits: int, model, lm_head_name: str):
                 else names[-1]
             )
 
-    if lm_head_name in lora_module_names:  # needed for 16-bit
-        lora_module_names.remove(lm_head_name)
+    if head_name and head_name in lora_module_names:  # needed for 16-bit
+        lora_module_names.remove(head_name)
 
     return list(lora_module_names)
 
@@ -78,7 +77,7 @@ def _check_is_causal(model_name_or_path, trust_remote_code):
         config = transformers.AutoConfig.from_pretrained(
             model_name_or_path, trust_remote_code=trust_remote_code)
     except OSError:
-        logger.warning(
+        LOGGER.warning(
             "The model doesn't have a config.json. "
             "We assume that it's causal. Use --force_seq2seq to override."
         )
@@ -93,38 +92,89 @@ def _check_is_causal(model_name_or_path, trust_remote_code):
         )
 
 
-def _find_lm_head(model):
+def _find_head(model):
     """
-    The original code tries to detect the lm head by checking for the presence
+    The original code tries to detect the head by checking for the presence
     of "lm_head" in the name of the module, which is again very flimsy. We try
-    to be more general. We find the lm_head by assuming that objects created by 
-    AutoModelForCausalLM have two modules as children, one 
+    to be more general. We find the head by assuming that objects created by 
+    AutoModelFor* have two modules as children, one 
     transformer.modeling_utils.PreTrainedModel, and the other is the lm_head.
     We make sure that lm_head is of a reasonable type for a lm_head.
     This is a lot more general.
     """
+
     children = [
         dict(name=name, module=module) 
         for name, module in model.named_children()
     ]
+
+    if len(children) != 2:
+        LOGGER.warning(f"Couldn't find the head. Got children: {[x['name'] for x in children]}")
+        return None
+
     assert len(children) == 2, len(children)
 
     pretrained_model = children[0]
-    lm_head = children[1]
+    head = children[1]
 
     assert isinstance(
         pretrained_model["module"],
         transformers.modeling_utils.PreTrainedModel), (
         type(pretrained_model))
     
-    assert isinstance(lm_head["module"], torch.nn.Linear), type(lm_head)
+    assert isinstance(head["module"], torch.nn.Linear), type(head)
 
-    return lm_head
+    return head
 
+
+PEFT_TASK_REGISTRY = {
+    transformers.AutoModelForSeq2SeqLM: peft.utils.config.TaskType.SEQ_2_SEQ_LM,
+    transformers.AutoModelForCausalLM: peft.utils.config.TaskType.CAUSAL_LM,
+    transformers.AutoModelForSequenceClassification: peft.utils.config.TaskType.SEQ_CLS,
+    transformers.AutoModelForTokenClassification: peft.utils.config.TaskType.TOKEN_CLS,   
+}
+
+def _resolve_hf_model_cls_and_peft_task(
+        model_name_or_path: str,
+        trust_remote_code: bool, 
+        hf_model_cls: Optional[type],
+        peft_task: Optional[peft.utils.config.TaskType],
+    ) -> tuple[type, peft.utils.config.TaskType]:
+
+    if hf_model_cls is None:
+        config = None
+        try:
+            config = transformers.AutoConfig.from_pretrained(
+                model_name_or_path, 
+                trust_remote_code=trust_remote_code,)
+            
+        except OSError:
+            LOGGER.warning(
+                "The Hugging Face model doesn't have a config.json. "
+                "Please supply the `hf_model_cls` explicitly. "
+                "We default to `transformers.AutoModelForCausalLM`.")
+
+        if config and vars(config).get("is_encoder_decoder", False):
+            hf_model_cls = transformers.AutoModelForSeq2SeqLM
+        else:
+            hf_model_cls = transformers.AutoModelForCausalLM
+    
+    if peft_task is None:
+        peft_task = PEFT_TASK_REGISTRY.get(hf_model_cls, None)
+
+    assert peft_task, (
+        "`peft_task` is None and `hf_model_cls` is not in the default registry, so "
+        "we can't infer the task type. Please pass `peft_task` explicitly. "
+        f"`peft_task` registry:\n{PEFT_TASK_REGISTRY}"
+    )
+
+    return hf_model_cls, peft_task
 
 
 def from_pretrained(
     model_name_or_path: str,
+    hf_model_cls: Optional[type],
+    peft_task: Optional[peft.utils.config.TaskType],
     fp16: bool = False,
     bf16: bool = True,
     max_memory_MB: Optional[int] = None,
@@ -141,8 +191,6 @@ def from_pretrained(
     lora_alpha: int = 16,
     lora_dropout: float = 0.0,
     local_rank: Optional[int] = _DEFAULT_VAL_LOCAL_RANK,
-    ignore_is_causal_check: bool = False,
-    force_seq2seq: bool = False,
 ):
     """Only public function of this library.
 
@@ -158,7 +206,31 @@ def from_pretrained(
     Args:
         model_name_or_path: 
             Huggingface auto model from_pretrained name or path argument.
-            No default.
+            No default, needs to be specified.
+        hf_model_cls:
+            The Hugging Face class to call from_pretrained on, like AutoModelForCausalLM. 
+            
+            If it is None, it will default to AutModelForCausalLM for a causal model, 
+            and AutoModelForSeq2SeqLM for a seq2seq model.
+
+            default: None
+        peft_task:
+            The peft-config task. Defined at peft.utils.config.TaskType:
+
+                class TaskType(str, enum.Enum):
+                    SEQ_CLS = "SEQ_CLS"
+                    SEQ_2_SEQ_LM = "SEQ_2_SEQ_LM"
+                    CAUSAL_LM = "CAUSAL_LM"
+                    TOKEN_CLS = "TOKEN_CLS"
+            
+            If `hf_model_cls` is AutoModelForCausalLM, we set it to CAUSAL_LM.
+            If `hf_model_cls` is AutoModelForSeq2SeqLM, we set it to SEQ_2_SEQ_LM.
+            If `hf_model_cls` is AutoModelForSequenceClassification, we set it to SEQ_CLS.
+            If `hf_model_cls` is AutoModelForTokenClassification, we set it to TOKEN_CLS.
+
+            Needs to be defined by the user otherwise.
+            
+            default: None
         bf16: 
             Whether to use bf16.
             Default: True.
@@ -204,47 +276,17 @@ def from_pretrained(
         lora_dropout: 
             Lora dropout.
             Default: 0.0.
-        ignore_is_causal_check: 
-            We added this. This is if you want to try using an encoder decoder. It's untested.
-            Default: False.
         local_rank: 
             Local rank for distributed training. 
             Default: int(os.environ["LOCAL_RANK"]) if it exists.
     """
-
-    # -------------------------------------------------------------------------
-    # JulesGM: We added those checks, as well as `experimental`
-    # support for encoder-decoder models. It should work out of the box,
-    # but we added warnings & requiring turning of "ignore_is_causal_check"
-    # because it's not in the original code.
-    # -------------------------------------------------------------------------
-    cls = transformers.AutoModelForCausalLM
-    if force_seq2seq:
-        cls = transformers.AutoModelForSeq2SeqLM
-        logger.warning(
-            "Seq2SeqLMs support is experimental. Use at your own risk."
-        )
-    elif ignore_is_causal_check:
-        try:
-            config = transformers.AutoConfig.from_pretrained(
-                model_name_or_path, 
-                trust_remote_code=trust_remote_code,
-            )
-            if vars(config).get("is_encoder_decoder", False):
-                logger.warning(
-                    "Encoder-decoder models are untested with this library.")
-                cls = transformers.AutoModelForSeq2SeqLM
-        except OSError:
-            # This model doesn't have a config.json file, so we can't check
-            # if it's an encoder-decoder model. 
-            logger.warning(
-                    "This model doesn't have a config.json file, "
-                    "so we can't check if it's an encoder-decoder model. "
-                    "Defaulting to causal. Use --force_seq2seq if you wanted "
-                    "a causal model."
-                )
-    else:
-        _check_is_causal(model_name_or_path, trust_remote_code)
+    
+    hf_model_cls, peft_task = _resolve_hf_model_cls_and_peft_task(
+        model_name_or_path=model_name_or_path, 
+        trust_remote_code=trust_remote_code,
+        hf_model_cls=hf_model_cls,
+        peft_task=peft_task,
+    )
 
     if fp16 and bf16:
         raise ValueError("Can't use both fp16 and bf16")
@@ -252,7 +294,6 @@ def from_pretrained(
     assert bits in [4, 8, 16, 32], (
         f"bits must be one of 4, 8, 16, 32, got {bits = }")
     
-
     # -------------------------------------------------------------------------
     # JulesGM: We added support for max_memory = None, so it doesn't
     # automatically overflow to cpu offloading, which is slow and should not
@@ -279,7 +320,7 @@ def from_pretrained(
     if full_finetune:
         assert bits in [16, 32]
 
-    logger.info(f"loading base model {model_name_or_path}...")
+    LOGGER.info(f"loading base model {model_name_or_path}...")
     compute_dtype = (
         torch.float16 
         if fp16 else (
@@ -289,7 +330,7 @@ def from_pretrained(
     )
 
     # JulesGM: This is identical to the original code.
-    model = cls.from_pretrained(
+    model: transformers.PreTrainedModel = hf_model_cls.from_pretrained(  # type: ignore
         model_name_or_path,
         cache_dir=cache_dir,
         load_in_4bit=bits == 4,
@@ -354,23 +395,23 @@ def from_pretrained(
     #
     # We try to be more general.
     # -------------------------------------------------------------------------
-    lm_head = _find_lm_head(model)
+    head = _find_head(model)
     # -------------------------------------------------------------------------
 
     if not full_finetune:
         if checkpoint_dir is not None:
-            logger.info("Loading adapters from checkpoint.")
-            model = peft.PeftModel.from_pretrained(
+            LOGGER.info("Loading adapters from checkpoint.")
+            model = peft.PeftModel.from_pretrained( # type: ignore
                 model, 
                 os.path.join(checkpoint_dir, "adapter_model"), 
                 is_trainable=True,
             )
         else:
-            logger.info(f"Adding LoRA modules.")
+            LOGGER.info(f"Adding LoRA modules.")
             modules = _find_all_linear_names(
                 bits=bits, 
                 model=model, 
-                lm_head_name=lm_head["name"],
+                head_name=head["name"] if head else None,
             )
             
             assert modules, f"{modules = }, {bits = }"
@@ -381,9 +422,12 @@ def from_pretrained(
                 target_modules=modules,
                 lora_dropout=lora_dropout,
                 bias="none",
-                task_type="CAUSAL_LM",)
+                task_type=peft_task,
+            )
             
-            model = peft.get_peft_model(model, config)
+            model = peft.get_peft_model(model, config) # type: ignore
+
+    model: Union[transformers.PreTrainedModel]
 
     fp32_weights = []
     for name, module in model.named_modules():
@@ -429,8 +473,8 @@ def from_pretrained(
         # 
         # We also use our more general method of detecting the lm_head
         # -------------------------------------------------------------------------
-        if (
-            module is lm_head["module"] or
+        is_head = (head and module is head["module"])
+        if (is_head or
             isinstance(module, torch.nn.Embedding)  
         ):
             if hasattr(module, "weight"):

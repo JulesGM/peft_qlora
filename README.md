@@ -24,7 +24,39 @@ model = peft_lora.from_pretrained("EleutherAI/pythia-12b", bf16=True)
 
 ## peft_lora.from_pretrained:
 
-**model_name_or_path:** Huggingface auto model from_pretrained name or path argument.
+**model_name_or_path:**
+
+Huggingface auto model from_pretrained name or path argument.
+
+No default, needs to be specified.
+
+**hf_model_cls:**
+The Hugging Face class to call from_pretrained on, like AutoModelForCausalLM. 
+
+If it is None, it will default to AutModelForCausalLM for a causal model, 
+and AutoModelForSeq2SeqLM for a seq2seq model.
+
+default: `None`
+
+**peft_task:**
+The peft-config task. Defined at peft.utils.config.TaskType:
+
+```python
+        class TaskType(str, enum.Enum):
+            SEQ_CLS = "SEQ_CLS"
+            SEQ_2_SEQ_LM = "SEQ_2_SEQ_LM"
+            CAUSAL_LM = "CAUSAL_LM"
+            TOKEN_CLS = "TOKEN_CLS"
+```
+
+If `hf_model_cls` is `AutoModelForCausalLM`, we set it to `CAUSAL_LM`.
+If `hf_model_cls` is `AutoModelForSeq2SeqLM`, we set it to `SEQ_2_SEQ_LM`.
+If `hf_model_cls` is `AutoModelForTokenClassification`, we set it to `TOKEN_CLS`.
+If `hf_model_cls` is `AutoModelForSequenceClassification`, we set it to `SEQ_CLS`.
+
+Needs to be defined by the user otherwise.
+
+Default: None
 
 **bf16:** Whether to use bf16.
 
@@ -55,5 +87,3 @@ model = peft_lora.from_pretrained("EleutherAI/pythia-12b", bf16=True)
 **lora_alpha:** Lora alpha.
 
 **lora_dropout:** Lora dropout.
-
-**ignore_is_causal_check:** We added this. This is if you want to try using an encoder decoder. It's untested.
