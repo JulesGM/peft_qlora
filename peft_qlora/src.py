@@ -427,8 +427,8 @@ def from_pretrained(
             
             model = peft.get_peft_model(model, config) # type: ignore
 
-    model: Union[transformers.PreTrainedModel]
-
+    model: Union[peft.PeftModel, transformers.PreTrainedModel]
+    
     fp32_weights = []
     for name, module in model.named_modules():
         if isinstance(module, LoraLayer):
